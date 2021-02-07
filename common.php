@@ -36,6 +36,7 @@ $EnvConfigs = [
     'customTheme'       => 0b011,
     'theme'             => 0b010,
     'dontBasicAuth'     => 0b010,
+    'referrer'          => 0b011,
 
     'Driver'            => 0b100,
     'client_id'         => 0b100,
@@ -51,7 +52,7 @@ $EnvConfigs = [
     'default_sbox_drive_id'=> 0b100,
 
     'diskname'          => 0b111,
-    'domain_path'       => 0b111,
+    //'domain_path'       => 0b111,
     'downloadencrypt'   => 0b110,
     'guestup_path'      => 0b111,
     'domainforproxy'    => 0b111,
@@ -355,6 +356,7 @@ function main($path)
     // is file && not preview mode, download file
     if ($files['type']=='file' && !isset($_GET['preview'])) {
         if ( $_SERVER['ishidden']<4 || (!!getConfig('downloadencrypt', $_SERVER['disktag'])&&$files['name']!=getConfig('passfile')) ) {
+            if (!isreferhost()) return message('plz Localhost', 'NOT_ALLOWED', 403);
             $url = $files['url'];
             $domainforproxy = '';
             $domainforproxy = getConfig('domainforproxy', $_SERVER['disktag']);
@@ -417,6 +419,19 @@ function extendShow_diskenv($drive)
 {
     if (!$drive) return [];
     return $drive->ext_show_innerenv();
+}
+
+function isreferhost() {
+    $referer = $_SERVER['referhost'];
+    if ($referer=='') return true;
+    if ($referer==$_SERVER['HTTP_HOST']) return true;
+    $referrer = getConfig('referrer');
+    if ($referrer=='') return true;
+    $arr = explode('|', $referrer);
+    foreach ($arr as $host) {
+        if ($host == $referer) return true;
+    }
+    return false;
 }
 
 function pass2cookie($name, $pass)
@@ -516,9 +531,9 @@ function getconstStr($str)
 
 function getListpath($domain)
 {
-    $domain_path1 = getConfig('domain_path', $_SERVER['disktag']);
+    //$domain_path1 = getConfig('domain_path', $_SERVER['disktag']);
     $public_path = getConfig('public_path', $_SERVER['disktag']);
-    $tmp_path='';
+    /*$tmp_path='';
     if ($domain_path1!='') {
         $tmp = explode("|",$domain_path1);
         foreach ($tmp as $multidomain_paths){
@@ -532,8 +547,8 @@ function getListpath($domain)
             }
         }
     }
-    if (isset($domain_path[$domain])) return spurlencode($domain_path[$domain],'/');
-    return spurlencode($public_path,'/');
+    if (isset($domain_path[$domain])) return spurlencode($domain_path[$domain],'/');*/
+    return spurlencode($public_path, '/');
 }
 
 function path_format($path)
@@ -776,6 +791,7 @@ function message($message, $title = 'Message', $statusCode = 200)
     <meta name=viewport content="width=device-width,initial-scale=1">
     <body>
         <h1>' . $title . '</h1>
+        <a href="' . $_SERVER['base_path'] . '">' . getconstStr('Back') . getconstStr('Home') . '</a>
         <p>
 
 ' . $message . '
@@ -814,8 +830,9 @@ function needUpdate()
 
 function output($body, $statusCode = 200, $headers = ['Content-Type' => 'text/html'], $isBase64Encoded = false)
 {
-    //$headers['Referrer-Policy'] = 'same-origin';
-    $headers['Referrer-Policy'] = 'no-referrer';
+    if (isset($_SERVER['Set-Cookie'])) $headers['Set-Cookie'] = $_SERVER['Set-Cookie'];
+    $headers['Referrer-Policy'] = 'no-referrer'; //$headers['Referrer-Policy'] = 'same-origin';
+    $headers['X-Frame-Options'] = 'sameorigin';
     return [
         'isBase64Encoded' => $isBase64Encoded,
         'statusCode' => $statusCode,
@@ -874,12 +891,8 @@ function adminform($name = '', $pass = '', $path = '')
         <body>' . getconstStr('LoginSuccess') . '</body></html>';
         $statusCode = 201;
         date_default_timezone_set('UTC');
-        $header = [
-            'Set-Cookie' => $name . '=' . $pass . '; path=/; expires=' . date(DATE_COOKIE, strtotime('+7day')),
-            //'Location' => $path,
-            'Content-Type' => 'text/html'
-        ];
-        return output($html, $statusCode, $header);
+        $_SERVER['Set-Cookie'] = $name . '=' . $pass . '; path=/; expires=' . date(DATE_COOKIE, strtotime('+7day'));
+        return output($html, $statusCode);
     }
     $statusCode = 401;
     $html .= '
@@ -1059,7 +1072,8 @@ function EnvOpt($needUpdate = 0)
     global $drive;
     ksort($EnvConfigs);
     $envs = '';
-    foreach ($EnvConfigs as $env => $v) if (isCommonEnv($env)) $envs .= '\'' . $env . '\', ';
+    //foreach ($EnvConfigs as $env => $v) if (isCommonEnv($env)) $envs .= '\'' . $env . '\', ';
+    $envs = substr(json_encode(array_keys ($EnvConfigs)), 1, -1);
 
     $html = '<title>OneManager '.getconstStr('Setup').'</title>';
     if (isset($_POST['updateProgram'])&&$_POST['updateProgram']==getconstStr('updateProgram')) {
@@ -1127,7 +1141,7 @@ function EnvOpt($needUpdate = 0)
         $preurl = path_format($_SERVER['PHP_SELF'] . '/');
     }
     $html .= '
-<a href="'.$preurl.'">'.getconstStr('Back').'</a>&nbsp;&nbsp;&nbsp;<a href="'.$_SERVER['base_path'].'">'.getconstStr('Back').getconstStr('Home').'</a><br>
+<a href="'.$preurl.'">'.getconstStr('Back').'</a><br>
 <a href="https://github.com/qkqpttgf/OneManager-php">Github</a><br>';
 
     $html .= '
@@ -1137,11 +1151,12 @@ function EnvOpt($needUpdate = 0)
             <td colspan="2">'.getconstStr('PlatformConfig').'</td>
         </tr>';
     foreach ($EnvConfigs as $key => $val) if (isCommonEnv($key) && isShowedEnv($key)) {
-        if ($key=='timezone') {
-            $html .= '
+        $html .= '
         <tr>
             <td><label>' . $key . '</label></td>
-            <td width=100%>
+            <td width=100%>';
+        if ($key=='timezone') {
+            $html .= '
                 <select name="' . $key .'">';
             foreach (array_keys($timezones) as $zone) {
                 $html .= '
@@ -1149,15 +1164,10 @@ function EnvOpt($needUpdate = 0)
             }
             $html .= '
                 </select>
-                '.getconstStr('EnvironmentsDescription')[$key].'
-            </td>
-        </tr>';
+                ' . getconstStr('EnvironmentsDescription')[$key];
         } elseif ($key=='theme') {
             $theme_arr = scandir(__DIR__ . $slash . 'theme');
             $html .= '
-        <tr>
-            <td><label>' . $key . '</label></td>
-            <td width=100%>
                 <select name="' . $key .'">
                     <option value=""></option>';
             foreach ($theme_arr as $v1) {
@@ -1166,9 +1176,7 @@ function EnvOpt($needUpdate = 0)
             }
             $html .= '
                 </select>
-                '.getconstStr('EnvironmentsDescription')[$key].'
-            </td>
-        </tr>';
+                ' . getconstStr('EnvironmentsDescription')[$key];
         } /*elseif ($key=='domain_path') {
             $tmp = getConfig($key);
             $domain_path = '';
@@ -1182,9 +1190,9 @@ function EnvOpt($needUpdate = 0)
             <td width=100%><input type="text" name="' . $key .'" value="' . $domain_path . '" placeholder="' . getconstStr('EnvironmentsDescription')[$key] . '" style="width:100%"></td>
         </tr>';
         }*/ else $html .= '
-        <tr>
-            <td><label>' . $key . '</label></td>
-            <td width=100%><input type="text" name="' . $key .'" value="' . htmlspecialchars(getConfig($key)) . '" placeholder="' . getconstStr('EnvironmentsDescription')[$key] . '" style="width:100%"></td>
+                <input type="text" name="' . $key .'" value="' . htmlspecialchars(getConfig($key)) . '" placeholder="' . getconstStr('EnvironmentsDescription')[$key] . '" style="width:100%">';
+        $html .= '
+            </td>
         </tr>';
     }
     $html .= '
@@ -1249,7 +1257,7 @@ function EnvOpt($needUpdate = 0)
         }
         envs = [' . $envs . '];
         if (envs.indexOf(t.disktag_sort.value)>-1) {
-            alert("Do not input ' . $envs . '");
+            alert(\'Do not input ' . $envs . '\');
             return false;
         }
         return true;
@@ -1321,7 +1329,7 @@ function EnvOpt($needUpdate = 0)
             } else {
                 $html .= '
     <tr>
-        <td colspan="2">Please add this disk again.</td>
+        <td colspan="2">' . $disk_tmp->error['body'] . '</td>
     </tr>';
             }
             $html .= '
@@ -1397,7 +1405,7 @@ function EnvOpt($needUpdate = 0)
         }
         envs = [' . $envs . '];
         if (envs.indexOf(t.disktag_newname.value)>-1) {
-            alert("Do not input ' . $envs . '");
+            alert(\'Do not input ' . $envs . '\');
             return false;
         }
         var reg = /^[a-zA-Z]([_a-zA-Z0-9]{1,20})$/;
@@ -1413,7 +1421,6 @@ function EnvOpt($needUpdate = 0)
         var xhr = new XMLHttpRequest();
         xhr.open("GET", "https://api.github.com/repos/"+document.updateform.auth.value+"/"+document.updateform.project.value+"/branches");
         //xhr.setRequestHeader("User-Agent","qkqpttgf/OneManager");
-        xhr.send(null);
         xhr.onload = function(e){
             console.log(xhr.responseText+","+xhr.status);
             if (xhr.status==200) {
@@ -1430,6 +1437,7 @@ function EnvOpt($needUpdate = 0)
         xhr.onerror = function(e){
             alert("Network Error "+xhr.status);
         }
+        xhr.send(null);
     }
 </script>
 ';
@@ -2426,6 +2434,6 @@ function render_list($path = '', $files = [])
 
     $tmp = splitfirst($html, '</title>');
     $html = $tmp[0] . '</title>' . $authinfo . $tmp[1];
-    if (isset($_SERVER['Set-Cookie'])) return output($html, $statusCode, [ 'Set-Cookie' => $_SERVER['Set-Cookie'], 'Content-Type' => 'text/html' ]);
+    //if (isset($_SERVER['Set-Cookie'])) return output($html, $statusCode, [ 'Set-Cookie' => $_SERVER['Set-Cookie'], 'Content-Type' => 'text/html' ]);
     return output($html, $statusCode);
 }
