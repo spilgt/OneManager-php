@@ -78,7 +78,7 @@ class Onedrive {
                 $arr = curl('GET', $url, '', ['Authorization' => 'Bearer ' . $this->access_token], 1);
                 $retry++;
             }*/
-            $arr = $this->MSAPI('GET', $url, '');
+            $arr = $this->MSAPI('GET', $url);
             //echo $url . '<br><pre>' . json_encode($arr, JSON_PRETTY_PRINT) . '</pre>';
             if ($arr['stat']<500) {
                 $files = json_decode($arr['body'], true);
@@ -909,7 +909,9 @@ class Onedrive {
         $activeLimit = getConfig('activeLimit', $this->disktag);
         if ($activeLimit!='') {
             if ($activeLimit>time()) {
-                return [ 'stat' => 403, 'body' => 'MS limit until ' . date('Y-m-d H:i:s', $activeLimit) ];
+                $tmp['error']['code'] = 'Retry-After';
+                $tmp['error']['message'] = 'MS limit until ' . date('Y-m-d H:i:s', $activeLimit);
+                return [ 'stat' => 429, 'body' => json_encode($tmp) ];
             } else {
                 setConfig(['activeLimit' => ''], $this->disktag);
             }
